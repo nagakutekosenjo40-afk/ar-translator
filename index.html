@@ -2,66 +2,119 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HTML5 リアルタイムAR翻訳</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ARリアルタイム翻訳 (機能拡張版)</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: sans-serif; margin: 0; background: #111; color: #fff; text-align: center; }
-        #controls { padding: 15px; }
-        select, button { padding: 10px; font-size: 16px; margin: 5px; }
+        body { font-family: sans-serif; margin: 0; background: #000; color: #fff; text-align: center; overflow: hidden; }
         
-        /* カメラと翻訳レイヤーを重ねるためのコンテナ */
-        #video-container {
-            position: relative;
-            width: 100%;
-            max-width: 640px;
-            margin: 0 auto;
-            overflow: hidden;
+        /* ヘッダーエリア */
+        #header {
+            position: fixed; top: 0; left: 0; width: 100%; height: 50px;
+            background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 100;
         }
-        video { width: 100%; height: auto; display: block; }
+        select { padding: 5px; font-size: 14px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; }
         
-        /* 翻訳テキストを配置する絶対座標のレイヤー */
-        #overlay {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; /* タップイベントなどを透過させる */
-        }
+        /* メインコンテナ */
+        #video-container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        
+        /* 翻訳レイヤー */
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
 
-        /* 動的に生成される翻訳テキストのスタイル */
+        /* 【修正1】翻訳テキストのスタイル（はみ出し防止） */
         .translated-label {
             position: absolute;
             background: rgba(0, 0, 0, 0.85);
-            color: #00ffcc;
-            font-size: 14px;
+            color: #00ffcc; /* シアン（緑っぽい青） */
             font-weight: bold;
-            border: 1px solid #00ffcc;
-            border-radius: 3px;
-            padding: 2px 4px;
+            border: 2px solid #00ffcc;
+            border-radius: 5px;
+            padding: 5px;
             box-sizing: border-box;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            
+            /* 長文対応の肝 */
+            white-space: normal;    /* 改行を許可 */
+            word-wrap: break-word; /* 単語の途中でも改行 */
+            overflow-y: auto;       /* 縦にはみ出したらスクロールバーを表示 */
+            
+            /* スクロールバーを少し見やすく */
+            scrollbar-width: thin;
+            scrollbar-color: #00ffcc rgba(0,0,0,0.5);
+            
             display: flex;
-            align-items: center;
-            justify-content: center;
+            align-items: center; /* 縦中央 */
+            justify-content: center; /* 横中央 */
+            text-align: center;
+            
+            /* 初期フォントサイズ。後でJSで調整 */
+            font-size: 16px; 
+            line-height: 1.3;
+        }
+
+        /* コントロールエリア（下部） */
+        #controls {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; z-index: 100;
+        }
+        button {
+            padding: 12px 20px; font-size: 16px; font-weight: bold;
+            color: white; border: none; border-radius: 30px;
+            cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: all 0.2s;
+        }
+        button:active { transform: translateX(-50%) scale(0.95); box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+
+        #start-btn { background: #007bff; /* 青 */ }
+        
+        /* 【修正2】ホールドボタンのスタイル */
+        #hold-btn {
+            background: #28a745; /* 緑 (通常時) */
+            display: none; /* カメラ起動前は隠す */
+        }
+        #hold-btn.holding {
+            background: #dc3545; /* 赤 (ホールド中) */
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+
+        /* 起動前のカバー */
+        #cover {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 200;
         }
     </style>
 </head>
 <body>
 
-    <div id="controls">
-        <h1>ARリアルタイム翻訳</h1>
+    <div id="cover">
+        <h1 style="margin-bottom: 30px;">AR翻訳アプリ</h1>
+        <button id="start-btn">カメラを起動してスタート</button>
+        <p style="color: #888; font-size: 12px; margin-top: 20px;">※カメラの許可ポップアップが出たら「許可」してください。</p>
+    </div>
+
+    <div id="header">
+        <span style="margin-right: 10px; font-size: 14px;">原文:</span>
         <select id="lang-select">
             <option value="eng">英語 (English)</option>
             <option value="fra">フランス語 (French)</option>
             <option value="deu">ドイツ語 (German)</option>
         </select>
-        <button id="start-btn">カメラ起動</button>
     </div>
 
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
         <div id="overlay"></div>
+    </div>
+
+    <div id="controls">
+        <button id="hold-btn">翻訳をキープ</button>
     </div>
 
     <canvas id="canvas" style="display:none;"></canvas>
@@ -71,32 +124,71 @@
         const canvas = document.getElementById('canvas');
         const overlay = document.getElementById('overlay');
         const startBtn = document.getElementById('start-btn');
+        const holdBtn = document.getElementById('hold-btn');
         const langSelect = document.getElementById('lang-select');
+        const cover = document.getElementById('cover');
 
         let isProcessing = false;
+        let isHolding = false; // ホールド状態を管理するフラグ
+        let analysisInterval; // インターバルタイマーのID
 
         // 1. カメラ起動
         startBtn.addEventListener('click', async () => {
             try {
+                cover.style.display = 'none'; // カバーを隠す
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
                     audio: false
                 });
                 video.srcObject = stream;
-                startBtn.style.display = 'none';
                 
-                // カメラの映像が実際に流れ始めたら定期処理を開始
                 video.addEventListener('playing', () => {
-                    setInterval(captureAndTranslate, 2500); // 2.5秒ごとに解析
+                    holdBtn.style.display = 'inline-block'; // ホールドボタンを表示
+                    startAnalysis(); // 解析を開始
                 });
             } catch (err) {
-                alert("カメラの起動に失敗しました: " + err.message);
+                alert("カメラの起動に失敗しました。HTTPS接続と権限を確認してください。: " + err.message);
+                cover.style.display = 'flex'; // カバーを再表示
+            }
+        });
+
+        // 解析処理を開始する関数
+        function startAnalysis() {
+            analysisInterval = setInterval(captureAndTranslate, 2500); // 2.5秒ごとに解析
+        }
+
+        // 解析処理を停止する関数
+        function stopAnalysis() {
+            clearInterval(analysisInterval);
+        }
+
+        // 【修正2】ホールドボタンのイベント
+        holdBtn.addEventListener('click', () => {
+            isHolding = !isHolding; // 状態を反転
+
+            if (isHolding) {
+                // ホールドON（一時停止）
+                stopAnalysis();
+                holdBtn.innerText = "キープ中 (タップで解除)";
+                holdBtn.classList.add('holding');
+                
+                // ホールド中、既存の翻訳ラベルにスクロール可能であることを示す（pointer-eventsを一時的にONに）
+                overlay.style.pointerEvents = 'auto';
+            } else {
+                // ホールドOFF（再開）
+                startAnalysis();
+                holdBtn.innerText = "翻訳をキープ";
+                holdBtn.classList.remove('holding');
+                
+                // ホールド解除、古いラベルは次の解析で消えるのでpointer-eventsをOFFに戻す
+                overlay.style.pointerEvents = 'none';
             }
         });
 
         // 2. 画像解析と座標の取得
         async function captureAndTranslate() {
-            if (isProcessing || video.videoWidth === 0) return;
+            // ホールド中、または処理中なら何もしない
+            if (isHolding || isProcessing || video.videoWidth === 0) return;
             isProcessing = true;
 
             const context = canvas.getContext('2d');
@@ -104,39 +196,30 @@
             canvas.height = video.videoHeight;
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            // 実際の表示サイズ（画面上での見かけの幅と高さ）を取得
             const displayWidth = video.clientWidth;
             const displayHeight = video.clientHeight;
-
-            // 元画像と表示画面の比率（スケール）を計算
             const scaleX = displayWidth / canvas.width;
             const scaleY = displayHeight / canvas.height;
 
             try {
-                // Tesseractで解析（文字のブロックごとの座標を取得）
+                // Tesseractで解析
                 const result = await Tesseract.recognize(canvas, langSelect.value);
                 
-                // 古い翻訳表示をクリア
+                // 新しい解析結果が出たら、古い翻訳をクリア（ホールド中はここに来ない）
                 overlay.innerHTML = '';
 
-                // 検出された文字ブロック（行・段落単位）をループ処理
                 const paragraphs = result.data.paragraphs;
                 for (let p of paragraphs) {
                     const text = p.text.trim();
-                    if (text.length > 2) { // 2文字以上の意味のある塊だけ処理
-                        // 翻訳APIを呼び出し
+                    if (text.length > 2) {
                         const translatedText = await translateText(text);
-                        
-                        // 座標（Bounding Box）を取得
                         const bbox = p.bbox;
 
-                        // 画面上の正しい位置に変換
                         const left = bbox.x0 * scaleX;
                         const top = bbox.y0 * scaleY;
                         const width = (bbox.x1 - bbox.x0) * scaleX;
                         const height = (bbox.y1 - bbox.y0) * scaleY;
 
-                        // 翻訳テキストを表示する要素を作成
                         const label = document.createElement('div');
                         label.className = 'translated-label';
                         label.innerText = translatedText;
@@ -147,7 +230,11 @@
                         label.style.width = `${width}px`;
                         label.style.height = `${height}px`;
 
-                        // レイヤーに追加
+                        // 【修正1追加】フォントサイズの自動調整
+                        // 枠の高さに応じてフォントサイズを調整（最低10px、最高24px）
+                        let fontSize = Math.max(10, Math.min(24, height * 0.4));
+                        label.style.fontSize = fontSize + 'px';
+
                         overlay.appendChild(label);
                     }
                 }
@@ -158,7 +245,7 @@
             }
         }
 
-        // 3. 翻訳関数
+        // 3. 翻訳関数（GoogleのデモAPIを使用）
         async function translateText(text) {
             const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=${encodeURIComponent(text)}`;
             try {
