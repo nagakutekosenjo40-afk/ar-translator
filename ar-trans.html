@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML5 リアルタイムAR翻訳</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 0; background: #111; color: #fff; text-align: center; }
+        #controls { padding: 15px; }
+        select, button { padding: 10px; font-size: 16px; margin: 5px; }
+        
+        /* カメラと翻訳レイヤーを重ねるためのコンテナ */
+        #video-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+            overflow: hidden;
+        }
+        video { width: 100%; height: auto; display: block; }
+        
+        /* 翻訳テキストを配置する絶対座標のレイヤー */
+        #overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; /* タップイベントなどを透過させる */
+        }
+
+        /* 動的に生成される翻訳テキストのスタイル */
+        .translated-label {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            color: #00ffcc;
+            font-size: 14px;
+            font-weight: bold;
+            border: 1px solid #00ffcc;
+            border-radius: 3px;
+            padding: 2px 4px;
+            box-sizing: border-box;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <h1>ARリアルタイム翻訳</h1>
+        <select id="lang-select">
+            <option value="eng">英語 (English)</option>
+            <option value="fra">フランス語 (French)</option>
+            <option value="deu">ドイツ語 (German)</option>
+        </select>
+        <button id="start-btn">カメラ起動</button>
+    </div>
+
+    <div id="video-container">
+        <video id="video" autoplay playsinline></video>
+        <div id="overlay"></div>
+    </div>
+
+    <canvas id="canvas" style="display:none;"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const langSelect = document.getElementById('lang-select');
+
+        let isProcessing = false;
+
+        // 1. カメラ起動
+        startBtn.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
+                });
+                video.srcObject = stream;
+                startBtn.style.display = 'none';
+                
+                // カメラの映像が実際に流れ始めたら定期処理を開始
+                video.addEventListener('playing', () => {
+                    setInterval(captureAndTranslate, 2500); // 2.5秒ごとに解析
+                });
+            } catch (err) {
+                alert("カメラの起動に失敗しました: " + err.message);
+            }
+        });
+
+        // 2. 画像解析と座標の取得
+        async function captureAndTranslate() {
+            if (isProcessing || video.videoWidth === 0) return;
+            isProcessing = true;
+
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // 実際の表示サイズ（画面上での見かけの幅と高さ）を取得
+            const displayWidth = video.clientWidth;
+            const displayHeight = video.clientHeight;
+
+            // 元画像と表示画面の比率（スケール）を計算
+            const scaleX = displayWidth / canvas.width;
+            const scaleY = displayHeight / canvas.height;
+
+            try {
+                // Tesseractで解析（文字のブロックごとの座標を取得）
+                const result = await Tesseract.recognize(canvas, langSelect.value);
+                
+                // 古い翻訳表示をクリア
+                overlay.innerHTML = '';
+
+                // 検出された文字ブロック（行・段落単位）をループ処理
+                const paragraphs = result.data.paragraphs;
+                for (let p of paragraphs) {
+                    const text = p.text.trim();
+                    if (text.length > 2) { // 2文字以上の意味のある塊だけ処理
+                        // 翻訳APIを呼び出し
+                        const translatedText = await translateText(text);
+                        
+                        // 座標（Bounding Box）を取得
+                        const bbox = p.bbox;
+
+                        // 画面上の正しい位置に変換
+                        const left = bbox.x0 * scaleX;
+                        const top = bbox.y0 * scaleY;
+                        const width = (bbox.x1 - bbox.x0) * scaleX;
+                        const height = (bbox.y1 - bbox.y0) * scaleY;
+
+                        // 翻訳テキストを表示する要素を作成
+                        const label = document.createElement('div');
+                        label.className = 'translated-label';
+                        label.innerText = translatedText;
+                        
+                        // 位置とサイズを設定
+                        label.style.left = `${left}px`;
+                        label.style.top = `${top}px`;
+                        label.style.width = `${width}px`;
+                        label.style.height = `${height}px`;
+
+                        // レイヤーに追加
+                        overlay.appendChild(label);
+                    }
+                }
+            } catch (error) {
+                console.error("エラー:", error);
+            } finally {
+                isProcessing = false;
+            }
+        }
+
+        // 3. 翻訳関数
+        async function translateText(text) {
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=${encodeURIComponent(text)}`;
+            try {
+                const response = await fetch(url);
+                const json = await response.json();
+                return json[0].map(item => item[0]).join('');
+            } catch (error) {
+                return "...";
+            }
+        }
+    </script>
+</body>
+</html>
